@@ -1,0 +1,134 @@
+import pandas as pd
+import re
+from pathlib import Path
+
+# Define the file path
+file_path = r"C:\Users\tzeen\Downloads\2024 Data Logs (4)\2024 Logs\PcbVision\PCB\Log\Machine\2024.9.6.log"
+
+# Read the file
+with open(file_path, "r", encoding="latin1") as file:
+    lines = file.readlines()
+
+log_filename = Path(file_path).stem  # Extract filename without extension
+
+# Initialize variables
+timestamps = []
+log_messages = []
+statuses = []
+products = []
+
+current_product = ""
+
+# Define patterns to filter
+patterns_to_keep = [
+    r"----Start Procession:\s*Manufacture----",
+    r"\(0\)--Start Mark!--",
+    r"\(0\)Stop PLC!",
+    r"The Software Stop Button is Pressed",
+    r"Software stopped unexpectedly",
+    r"\(0\)Failed Waiting for PCB To Be in Place.*\(Err:32\)",
+    r"\(0\)The Program is Pressed To Stop\(Err:32\)",
+    r"Start processing failed.*",
+    r"\(0\)Failed Waiting for PCB To Be in Place: Software stopped unexpectedly\(Err:32\)",
+    r"SetFileName File: D:\\Production Program\\",
+    r"No Match Pattern Fool Proof!",
+    r"Waiting for material to arrive failed.*",
+    r"\(0\)Successfully Cutting",
+    r"\(0\)\s*Marking Completed.*",
+    r"SetFileName File",
+    r"Feeding Success",
+    r"Downtime",  # Ensure "Downtime" messages appear
+]
+
+# Define status mappings
+status_mappings = {
+    r"----Start Procession:\s*Manufacture----": "Start Standby",
+    "(0)--Start Mark!--": "Start Production",
+    "(0)Stop PLC!": "Start Idle",
+    "The Software Stop Button is Pressed": "Start Idle",
+    "Software stopped unexpectedly": "Downtime",
+    "(0)Failed Waiting for PCB To Be in Place:The Program is Pressed To Stop(Err:32)": "Downtime",
+    "(0)The Program is Pressed To Stop(Err:32)": "Downtime",
+    "Start processing failed:The Track System is Not Initialized(Err:61)": "Downtime",
+    "(0)Failed Waiting for PCB To Be in Place:Software stopped unexpectedly(Err:32)": "Downtime",
+    "Feeding Success": "End Standby",
+    "(0)Successfully Cutting": "End Production",
+    "----Start Procession: Manufacture----": "End Idle",
+    "(0)Marking Completed": "Productive",
+    "SetFileName File": "Productive"
+}
+
+# Process each line in the log file
+for line in lines:
+    line = line.strip()
+    if not line:
+        continue
+
+    # Extract timestamp and message
+    match = re.match(r"(\d{2}:\d{2}:\d{2}):(.*)", line)
+    if match:
+        timestamp, message = match.groups()
+
+        # Check if the message matches any pattern
+        if any(re.search(pattern, message) for pattern in patterns_to_keep):
+            if "SetFileName File:" in message:
+                current_product = message.split("SetFileName File:")[-1].strip()
+
+            status = next((value for key, value in status_mappings.items() if key in message), "")
+
+            timestamps.append(timestamp)
+            log_messages.append(message)
+            statuses.append(status)
+            products.append(current_product)
+
+# Create DataFrame
+df = pd.DataFrame({
+    "Date": log_filename,
+    "Timestamp": timestamps,
+    "Log Message": log_messages,
+    "Product": products,
+    "Status": statuses
+})
+
+# Convert Timestamp column to datetime (only HH:MM:SS)
+df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M:%S").dt.time
+
+# Add Duration Column
+df["Duration"] = None
+
+# Store start times for each status type
+start_times = {}
+
+for i, row in df.iterrows():
+    status = row["Status"]
+
+    # Identify whether it's a start or end status
+    if status.startswith("Start"):
+        start_times[status] = row["Timestamp"]  # Store start time
+
+    elif status.startswith("End") and start_times.get(status.replace("End", "Start")):
+        start_status = status.replace("End", "Start")
+        end_time = row["Timestamp"]
+        start_time = start_times[start_status]  # Retrieve the matching start time
+
+        # Convert times to datetime objects for subtraction
+        start_dt = pd.to_datetime(str(start_time), format="%H:%M:%S")
+        end_dt = pd.to_datetime(str(end_time), format="%H:%M:%S")
+
+        # Compute duration and format it as HH:MM:SS
+        duration = (end_dt - start_dt).seconds  # Get difference in seconds
+        duration_formatted = f"{duration // 3600:02}:{(duration % 3600) // 60:02}:{duration % 60:02}"
+
+        df.at[i, "Duration"] = duration_formatted  # Store the duration
+
+# Define output file
+output_file = Path("C:/Users/tzeen/Downloads/filtered_log_data_with_all_duration.csv")
+
+# Save to CSV
+df.to_csv(output_file, index=False)
+
+# Print message
+print(f"Processed log data saved to {output_file}")
+
+# Display first few rows
+print(df.head())
