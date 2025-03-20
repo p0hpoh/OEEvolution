@@ -5,6 +5,7 @@ from pathlib import Path
 # ✅ Corrected: Use raw string OR forward slashes
 folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
 
+
 # Initialize lists to store data
 timestamps = []
 log_messages = []
@@ -85,29 +86,3 @@ pd.set_option('display.expand_frame_repr', False)
 
 # ✅ Display first 1000 rows
 print(df.head(1000))
-
-import pandas as pd
-
-
-# To create CSV File on Excel to see the 1M rows from the middle of the dataframe
-'''
-# Define the output file path
-output_file = r"C:\Users\Jerald\Documents\GitHub\OEEvolution\middle_1M_rows.xlsx"
-
-# Get the total number of rows
-total_rows = len(df)
-
-# Define the range to extract 1 million rows from the middle
-start_index = max(0, total_rows // 2 - 500000)  # Ensure we don't go below index 0
-end_index = min(total_rows, start_index + 1000000)  # Ensure we don't exceed max rows
-
-# Extract middle 1 million rows
-df_middle = df.iloc[start_index:end_index]
-
-# Save to Excel
-df_middle.to_excel(output_file, index=False, engine="openpyxl")
-
-# Print confirmation
-print(f"Middle 1 million rows saved to: {output_file}")'
-'''
-
