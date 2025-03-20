@@ -89,6 +89,8 @@ print(df.head(1000))
 import pandas as pd
 
 
+# To create CSV File on Excel to see the 1M rows from the middle of the dataframe
+'''
 # Define the output file path
 output_file = r"C:\Users\Jerald\Documents\GitHub\OEEvolution\middle_1M_rows.xlsx"
 
@@ -106,5 +108,6 @@ df_middle = df.iloc[start_index:end_index]
 df_middle.to_excel(output_file, index=False, engine="openpyxl")
 
 # Print confirmation
-print(f"Middle 1 million rows saved to: {output_file}")
+print(f"Middle 1 million rows saved to: {output_file}")'
+'''
 
