@@ -1,10 +1,10 @@
+
 import pandas as pd
 import re
 from pathlib import Path
 
 # ✅ Corrected: Use raw string OR forward slashes
 folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
-
 
 # Initialize lists to store data
 timestamps = []
@@ -14,8 +14,12 @@ products = []
 product_ids = []
 dates = []
 
+# ✅ Initialize global tracking variables to persist across log files
+last_product = ""  
+last_product_id = "99999999"  
+
 # Process each log file in the folder
-for log_file in folder_path.glob("*.log"):
+for log_file in sorted(folder_path.glob("*.log")):  # ✅ Ensure logs are processed in order
     log_filename = log_file.stem  # Extract filename without extension
 
     # Read the file
@@ -24,8 +28,8 @@ for log_file in folder_path.glob("*.log"):
 
     # Initialize tracking variables
     current_status = "Idle"  
-    current_product = ""  
-    current_product_id = "99999999"  # Default Product ID
+    current_product = last_product  # ✅ Start with the last known product
+    current_product_id = last_product_id  # ✅ Start with the last known Product ID
 
     # Process each line
     for line in lines:
@@ -41,11 +45,13 @@ for log_file in folder_path.glob("*.log"):
             # ✅ Fix: Extract product name and Product ID
             if "SetFileName File:" in message:
                 current_product = message.split("SetFileName File:")[-1].strip()
+                last_product = current_product  # ✅ Update global product
 
                 # ✅ Fix: Improved regex to handle both `/` and `\` as directory separators
                 product_id_match = re.search(r"[/\\](\d{8})_", current_product)
                 if product_id_match:
                     current_product_id = product_id_match.group(1)
+                    last_product_id = current_product_id  # ✅ Update global product ID
                 else:
                     current_product_id = "99999999"  
 
@@ -86,3 +92,20 @@ pd.set_option('display.expand_frame_repr', False)
 
 # ✅ Display first 1000 rows
 print(df.head(1000))
+
+# ✅ Excel row limit (excluding header)
+excel_limit = 1_048_575
+
+# ✅ Calculate starting index (75% of the DataFrame)
+start_index = int(len(df) * 0.75)
+
+# ✅ Slice safely without exceeding Excel row limit
+df_slice = df.iloc[start_index:start_index + min(excel_limit, len(df) - start_index)]
+
+# ✅ Output file path
+output_path = r"C:\Users\Jerald\Downloads\log_data_slice.xlsx"
+
+# ✅ Write to Excel (openpyxl is default for .xlsx)
+df_slice.to_excel(output_path, index=False)
+
+print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
