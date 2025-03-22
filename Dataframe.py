@@ -195,14 +195,18 @@ df = pd.DataFrame({
     "Time Difference (Seconds)": time_diffs
 })
 
+
+
+# ========== Changes number of rows Pandas shows ==========
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
-#print(df.head(2000))
+print(df.head(2000))
 
 
-# ========== Function to Extract Product Table ==========
+
+# ========== Function to Produce Product Name ID Table ==========
 def extract_unique_products_from_df(df):
     """
     Given a DataFrame with a 'Log Message' column, extract unique product entries
@@ -247,6 +251,84 @@ def extract_unique_products_from_df(df):
     return result_df
 
 
+
+# ========== Function to Produce Number of Products Table ==========
+def extract_number_of_products_table(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extracts a table that summarizes product marking cycles from a detailed log DataFrame.
+    This includes timing information for each 'Start Mark!' cycle, number of units, and ideal cycle times.
+    """
+    # Convert Timestamp to datetime format (if not already)
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M:%S")
+
+    # Initialize list for storing extracted cycle data
+    cycles = []
+
+    # Iterate through the dataframe to extract cycles
+    i = 0
+    while i < len(df):
+        # Find the "Start Mark!" log to begin a cycle
+        if "Start Mark!" in df.iloc[i]["Log Message"]:
+            start_time = df.iloc[i]["Timestamp"]
+            date = df.iloc[i]["Date"]
+            product_id = df.iloc[i]["Product_ID"]
+            i += 1
+            marking_count = 0
+            end_time = None
+
+            # Look for the corresponding "Successfully Cutting" or "Stop PLC!" log
+            while i < len(df):
+                log_message = df.iloc[i]["Log Message"]
+
+                if "Successfully Cutting" in log_message:
+                    end_time = df.iloc[i]["Timestamp"]
+                    break
+
+                if re.search(r"\(0\)Marking Completed\(\d+ms\)", log_message):
+                    marking_count += 1
+
+                if "Stop PLC!" in log_message and end_time is None:
+                    if marking_count > 0:
+                        end_time = df.iloc[i]["Timestamp"]
+                    break
+
+                i += 1
+
+            if end_time and end_time > start_time:
+                cycle_duration = (end_time - start_time).total_seconds()
+                unit_duration = cycle_duration / marking_count if marking_count > 0 else None
+
+                cycles.append([
+                    date,
+                    product_id,
+                    start_time.time(),
+                    end_time.time(),
+                    cycle_duration,
+                    marking_count,
+                    unit_duration
+                ])
+
+        i += 1
+
+    result_df = pd.DataFrame(
+        cycles,
+        columns=[
+            "Date", "Product_ID", "Cycle_Start_Time", "Cycle_End_Time",
+            "Cycle_Duration", "Number_of_Units", "Unit_Duration"
+        ]
+    )
+
+    # ---- Add Ideal Unit Time and Ideal Cycle Time ----
+    ideal_unit_time = result_df.groupby("Product_ID")["Unit_Duration"]\
+        .apply(lambda x: x[x > 0][x[x > 0] <= x[x > 0].quantile(0.25)].min())
+
+    result_df["Ideal_Unit_Time"] = result_df["Product_ID"].map(ideal_unit_time)
+    result_df["Ideal_Cycle_Time"] = result_df["Ideal_Unit_Time"] * result_df["Number_of_Units"]
+
+    return result_df
+
+
+
 # ✅ Export a middle slice (1M rows max) to Excel, change accordingly
 excel_limit = 1_048_575
 start_index = int(len(df) * 0.75)
@@ -259,4 +341,9 @@ print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
 product_table = extract_unique_products_from_df(df)
 product_table.to_excel(r"C:\Users\Jerald\Downloads\Product_Name_ID_Table.xlsx", index=False)
 print("✅ Product table exported successfully.")
+
+# ========== Export Excel file for Number of Products Table ==========
+Number_of_Products_df = extract_number_of_products_table(df)
+Number_of_Products_df.to_excel(r"C:\Users\Jerald\Downloads\Number_of_Products_Table.xlsx", index=False)
+print("✅ Number of Products table exported successfully.")
 
