@@ -5,7 +5,7 @@ from datetime import datetime
 
 # ========== CONFIG ==========
 # folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/Machine copy")
-folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
+folder_path = Path(r"C:\Users\shery\Downloads\SUTD\DBA\2024 Logs\PcbVision\PCB\Log\Machine")
 
 # ========== DataFrame Lists ==========
 timestamps = []
@@ -157,17 +157,6 @@ for log_file in sorted(folder_path.glob("*.log")):
                 # no triggers => remain in old status
                 new_label = backup_status
 
-        # ===== Time Difference =====
-        time_diff = None
-        if statuses:
-            prev_base = base_status_of(statuses[-1])
-            this_base = base_status_of(new_label)
-            # Only compute if same base, not fallback or downtime
-            if prev_base == this_base and this_base not in [FALLBACK_STATUS, "Downtime"]:
-                prev_ts_str = timestamps[-1]
-                prev_dt = datetime.strptime(prev_ts_str, "%H:%M:%S")
-                time_diff = (current_dt - prev_dt).total_seconds()
-
         # ===== Append row =====
         timestamps.append(timestamp_str)
         log_messages.append(message)
@@ -175,7 +164,6 @@ for log_file in sorted(folder_path.glob("*.log")):
         products.append(current_product)
         product_ids.append(current_product_id)
         dates.append(file_name)
-        time_diffs.append(time_diff)
 
         previous_timestamp = current_dt
         previous_label = new_label
@@ -191,8 +179,7 @@ df = pd.DataFrame({
     "Log Message": log_messages,
     "Product": products,
     "Product_ID": product_ids,
-    "Status": statuses,
-    "Time Difference (Seconds)": time_diffs
+    "Status": statuses
 })
 
 pd.set_option('display.max_rows', None)
@@ -202,13 +189,54 @@ pd.set_option('display.expand_frame_repr', False)
 print(df.head(2000))
 
 
+# ========== Generate and Save Daily Status Summary ==========
 
+def generate_status_summary(df: pd.DataFrame, output_path: str):
+    """
+    Generates a daily status summary table using actual 'Status' values.
+    Calculates time difference between each row and the next row,
+    assigns that duration to the current row's status,
+    and sums it per day per status.
+    """
+    df = df.copy()
 
-# ✅ Export a middle slice (1M rows max) to Excel, change accordingly
-excel_limit = 1_048_575
-start_index = int(len(df) * 0.75)
-df_slice = df.iloc[start_index:start_index + min(excel_limit, len(df) - start_index)]
-output_path = r"C:\Users\Jerald\Downloads\log_data_slice.xlsx"
-df_slice.to_excel(output_path, index=False)
-print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
+    # Convert 'Date' to datetime format
+    df['Date'] = pd.to_datetime(df['Date'], format='%Y.%m.%d', errors='coerce')
+    df = df.dropna(subset=['Date'])
 
+    # Combine 'Date' and 'Timestamp' to make full datetime objects
+    df['Full_Timestamp'] = df['Date'].dt.strftime('%Y-%m-%d') + ' ' + df['Timestamp']
+    df['Full_Timestamp'] = pd.to_datetime(df['Full_Timestamp'], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+    df = df.sort_values(by='Full_Timestamp').reset_index(drop=True)
+
+    # Calculate time difference to next row (in seconds)
+    df['Next_Timestamp'] = df['Full_Timestamp'].shift(-1)
+    df['Time_Diff_Seconds'] = (df['Next_Timestamp'] - df['Full_Timestamp']).dt.total_seconds().fillna(0).clip(lower=0)
+
+    # Convert seconds to hours
+    df['Time_Diff_Hours'] = df['Time_Diff_Seconds'] / 3600
+
+    # Use stripped Status values as Base_Status
+    df['Base_Status'] = df['Status'].astype(str).str.strip()
+
+    # Group by Date and Base_Status to get total duration per day per status
+    status_summary = (
+        df.groupby(['Date', 'Base_Status'])['Time_Diff_Hours']
+        .sum()
+        .unstack(fill_value=0)
+    )
+
+    # Ensure consistent order
+    desired_order = ['Idle', 'Standby', 'Downtime', 'Productive']
+    status_summary = status_summary.reindex(columns=desired_order, fill_value=0)
+
+    # Rename columns
+    status_summary.columns = [f"{col} (h)" for col in status_summary.columns]
+    status_summary = status_summary.reset_index().round(2)
+
+    # Save to CSV
+    status_summary.to_csv(output_path, index=False)
+    print(f"✅ Daily status summary saved to: {output_path}")
+
+# Save daily status summary to file
+generate_status_summary(df, r"C:\Users\shery\Downloads\daily_status_summary.csv")

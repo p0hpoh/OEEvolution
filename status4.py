@@ -5,7 +5,7 @@ from datetime import datetime
 
 # ========== CONFIG ==========
 # folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/Machine copy")
-folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
+folder_path = Path(r"C:\Users\shery\Downloads\SUTD\DBA\2024 Logs\PcbVision\PCB\Log\Machine")
 
 # ========== DataFrame Lists ==========
 timestamps = []
@@ -208,7 +208,39 @@ print(df.head(2000))
 excel_limit = 1_048_575
 start_index = int(len(df) * 0.75)
 df_slice = df.iloc[start_index:start_index + min(excel_limit, len(df) - start_index)]
-output_path = r"C:\Users\Jerald\Downloads\log_data_slice.xlsx"
+output_path = r"C:\Users\shery\Downloads\SUTD\DBA\log_data_slice.xlsx"
 df_slice.to_excel(output_path, index=False)
 print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
 
+
+
+
+# ========== Generate Status Summary Table ==========
+def generate_status_summary(df: pd.DataFrame, output_path: str):
+    """
+    Generates a daily status summary table using actual 'Status' values.
+    Calculates time difference between each row and the next row,
+    assigns that duration to the current row's status,
+    and sums it per day per status.
+    """
+    df = df.copy()
+    df['Base_Status'] = df['Status'].apply(lambda x: base_status_of(str(x).strip()))
+    df['Time_Diff_Hours'] = df['Time Difference (Seconds)'] / 3600
+
+    status_summary = (
+        df.groupby(['Date', 'Base_Status'])['Time_Diff_Hours']
+        .sum()
+        .unstack(fill_value=0)
+    )
+
+    desired_order = ['Idle', 'Standby', 'Downtime', 'Productive']
+    status_summary = status_summary.reindex(columns=desired_order, fill_value=0)
+    status_summary.columns = [f"{col} (h)" for col in status_summary.columns]
+    status_summary = status_summary.reset_index().round(2)
+
+    status_summary.to_csv(output_path, index=False)
+    print(f"✅ Daily status summary saved to: {output_path}")
+
+# ========== Save Output ==========
+output_file = r"C:\Users\shery\Downloads\SUTD\DBA\status_summary.csv"
+generate_status_summary(df, output_file)
