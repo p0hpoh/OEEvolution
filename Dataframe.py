@@ -199,16 +199,64 @@ pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
-print(df.head(2000))
+#print(df.head(2000))
 
 
+# ========== Function to Extract Product Table ==========
+def extract_unique_products_from_df(df):
+    """
+    Given a DataFrame with a 'Log Message' column, extract unique product entries
+    where Product ID must be exactly 8 digits and appear between '\' and '_'.
+    Returns a new DataFrame with 'Original Line', 'Product Name', and 'Product_ID'.
+    """
+    product_names = []
+    product_ids = []
+    original_lines = []
+    seen_products = set()
+
+    for line in df["Log Message"]:
+        line = line.strip()
+        if not line or "SetFileName" not in line:
+            continue
+
+        current_product = line.split("SetFileName File:")[-1].strip()
+        current_product_name = current_product.split("\\")[-1]
+
+        # ✅ Strictly match only 8 digits BETWEEN \ and _
+        product_id_match = re.search(r"\\(\d{8})_", current_product)
+        if product_id_match:
+            current_product_id = product_id_match.group(1)
+        else:
+            current_product_id = "99999999"
+
+        product_key = (current_product_name, current_product_id)
+        if product_key in seen_products:
+            continue
+        seen_products.add(product_key)
+
+        product_names.append(current_product_name)
+        product_ids.append(current_product_id)
+        original_lines.append(line)
+
+    result_df = pd.DataFrame({
+        "Original Line": original_lines,
+        "Product Name": product_names,
+        "Product_ID": product_ids
+    }).drop_duplicates().sort_values(by="Product_ID").reset_index(drop=True)
+
+    return result_df
 
 
 # ✅ Export a middle slice (1M rows max) to Excel, change accordingly
 excel_limit = 1_048_575
 start_index = int(len(df) * 0.75)
 df_slice = df.iloc[start_index:start_index + min(excel_limit, len(df) - start_index)]
-output_path = r"C:\Users\Jerald\Downloads\log_data_slice.xlsx"
+output_path = r"C:\Users\Jerald\Downloads\Dataframe_5_Columns_Base.xlsx"
 df_slice.to_excel(output_path, index=False)
 print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
+
+# ========== Export Excel file for Product Name/ID Table ==========
+product_table = extract_unique_products_from_df(df)
+product_table.to_excel(r"C:\Users\Jerald\Downloads\Product_Name_ID_Table.xlsx", index=False)
+print("✅ Product table exported successfully.")
 
