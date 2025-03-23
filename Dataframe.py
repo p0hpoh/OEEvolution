@@ -173,7 +173,7 @@ for log_file in sorted(folder_path.glob("*.log")):
             "Product": current_product,
             "Product_ID": current_product_id,
             "Status": new_label,
-            "Parsed_TS": current_dt
+            # "Parsed_TS": current_dt
         })
 
         previous_timestamp = current_dt
@@ -185,10 +185,34 @@ for log_file in sorted(folder_path.glob("*.log")):
 # ========== Build DataFrame ==========
 df = pd.DataFrame(log_entries)
 
+# ✅ Convert 'Date' from string to datetime format for proper chronological sorting
+df["Date"] = pd.to_datetime(df["Date"], format="%Y.%m.%d", errors="coerce")
+
+# ✅ Convert 'Timestamp' from string to datetime.time object
+df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M:%S", errors="coerce").dt.time
+
+# ✅ Drop rows where conversion failed (if any)
+df = df.dropna(subset=["Date", "Timestamp"])
+
+# ✅ Sort DataFrame chronologically by both Date and Timestamp
+df = df.sort_values(by=["Date", "Timestamp"]).reset_index(drop=True)
+
+df["Date"] = df["Date"].dt.date
+
+
+# ========== Changes number of rows Pandas shows ==========
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.expand_frame_repr', False)
+
+# ✅ View output
+print(df.head(2000))
+
+
 # ========== Compute Forward Time Differences ==========
-df["Next_TS"] = df["Parsed_TS"].shift(-1)
-df["Time Difference (Seconds)"] = (df["Next_TS"] - df["Parsed_TS"]).dt.total_seconds().clip(lower=0).fillna(0)
-df.drop(columns=["Parsed_TS", "Next_TS"], inplace=True)
+# df["Next_TS"] = df["Parsed_TS"].shift(-1)
+# df["Time Difference (Seconds)"] = (df["Next_TS"] - df["Parsed_TS"]).dt.total_seconds().clip(lower=0).fillna(0)
+# df.drop(columns=["Parsed_TS", "Next_TS"], inplace=True)
 
 
 
@@ -198,7 +222,6 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
 print(df.head(2000))
-
 
 
 # ========== Function to Produce Product Name ID Table ==========
@@ -332,6 +355,7 @@ output_path = r"C:\Users\Jerald\Downloads\Dataframe_5_Columns_Base.xlsx"
 df_slice.to_excel(output_path, index=False)
 print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
 
+
 # ========== Export Excel file for Product Name/ID Table ==========
 product_table = extract_unique_products_from_df(df)
 product_table.to_excel(r"C:\Users\Jerald\Downloads\Product_Name_ID_Table.xlsx", index=False)
@@ -341,4 +365,3 @@ print("✅ Product table exported successfully.")
 Number_of_Products_df = extract_number_of_products_table(df)
 Number_of_Products_df.to_excel(r"C:\Users\Jerald\Downloads\Number_of_Products_Table.xlsx", index=False)
 print("✅ Number of Products table exported successfully.")
-
