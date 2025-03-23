@@ -345,6 +345,70 @@ def extract_number_of_products_table(df: pd.DataFrame) -> pd.DataFrame:
 
     return result_df
 
+# ========== Function to Produce Daily Status Table ==========
+
+def generate_daily_status_table(df):
+
+    # Normalize Timestamp
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M:%S", errors="coerce")
+    df = df.dropna(subset=["Timestamp"])
+
+    # Normalize status to base form
+    df["Base_Status"] = df["Status"].str.replace(r"^(Start |End )", "", regex=True)
+
+    # Compute time spent by subtracting timestamp[i+1] - timestamp[i]
+    df["Next_Timestamp"] = df["Timestamp"].shift(-1)
+    df["Next_Date"] = df["Date"].shift(-1)
+    df["Time_Diff"] = (df["Next_Timestamp"] - df["Timestamp"]).dt.total_seconds()
+
+    # Default fallback for time at end of file
+    df["Time_Diff"] = df["Time_Diff"].fillna(0)
+    df["Time_Diff"] = df["Time_Diff"].clip(lower=0)
+
+    # Handle potential day rollovers
+    new_rows = []
+    for i, row in df.iterrows():
+        status = row["Base_Status"]
+        date = row["Date"]
+        time = row["Timestamp"]
+        next_time = row["Next_Timestamp"]
+        duration = row["Time_Diff"]
+
+        if pd.isna(next_time) or duration == 0:
+            new_rows.append([date, status, duration])
+            continue
+
+        # Check if date changes
+        if row["Date"] != row["Next_Date"] or next_time < time:
+            midnight = datetime.combine(time.date(), datetime.min.time()) + timedelta(days=1)
+            seconds_to_midnight = (midnight - time).total_seconds()
+            seconds_after_midnight = max(0, duration - seconds_to_midnight)
+
+            new_rows.append([date, status, seconds_to_midnight])
+            new_rows.append([row["Next_Date"], status, seconds_after_midnight])
+        else:
+            new_rows.append([date, status, duration])
+
+    # Build final dataframe
+    status_df = pd.DataFrame(new_rows, columns=["Date", "Status", "Seconds"])
+    pivot = status_df.pivot_table(index="Date", columns="Status", values="Seconds", aggfunc="sum").fillna(0)
+
+    # Convert seconds to hours
+    pivot = pivot / 3600
+    pivot = pivot.round(4)
+
+    # Ensure all expected statuses are present
+    for col in ["Productive", "Idle", "Standby", "Downtime", "Off"]:
+        if col not in pivot.columns:
+            pivot[col] = 0.0
+
+    # Reorder columns
+    pivot = pivot[["Productive", "Idle", "Standby", "Downtime", "Off"]]
+
+    # Reset index for final output
+    pivot = pivot.reset_index()
+
+    return pivot
 
 
 # ✅ Export a middle slice (1M rows max) to Excel, change accordingly
@@ -365,3 +429,8 @@ print("✅ Product table exported successfully.")
 Number_of_Products_df = extract_number_of_products_table(df)
 Number_of_Products_df.to_excel(r"C:\Users\Jerald\Downloads\Number_of_Products_Table.xlsx", index=False)
 print("✅ Number of Products table exported successfully.")
+
+# ========== Export Excel file for Daily Status Table ==========
+daily_status_table = generate_daily_status_table(df)
+daily_status_table.to_excel(r"C:\Users\Jerald\Downloads\Daily_Status_Table.xlsx", index=False)
+print("✅ Daily status table exported successfully.")
