@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 # ========== CONFIG ==========
 # folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/test")
-folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
+folder_path = Path(r"C:\Users\shery\Downloads\SUTD\DBA\2024 Logs\PcbVision\PCB\Log\Machine")
 
 # ========== DataFrame Lists ==========
 timestamps = []
@@ -328,17 +328,91 @@ def extract_number_of_products_table(df: pd.DataFrame) -> pd.DataFrame:
 excel_limit = 1_048_575
 start_index = int(len(df) * 0.75)
 df_slice = df.iloc[start_index:start_index + min(excel_limit, len(df) - start_index)]
-output_path = r"C:\Users\Jerald\Downloads\Dataframe_5_Columns_Base.xlsx"
+output_path = r"C:\Users\shery\Downloads\SUTD\DBA\Dataframe_5_Columns_Base.xlsx"
 df_slice.to_excel(output_path, index=False)
 print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
 
 # ========== Export Excel file for Product Name/ID Table ==========
 product_table = extract_unique_products_from_df(df)
-product_table.to_excel(r"C:\Users\Jerald\Downloads\Product_Name_ID_Table.xlsx", index=False)
+product_table.to_excel(r"C:\Users\shery\Downloads\SUTD\DBA\Product_Name_ID_Table.xlsx", index=False)
 print("✅ Product table exported successfully.")
 
 # ========== Export Excel file for Number of Products Table ==========
 Number_of_Products_df = extract_number_of_products_table(df)
-Number_of_Products_df.to_excel(r"C:\Users\Jerald\Downloads\Number_of_Products_Table.xlsx", index=False)
+Number_of_Products_df.to_excel(r"C:\Users\shery\Downloads\SUTD\DBA\Number_of_Products_Table.xlsx", index=False)
 print("✅ Number of Products table exported successfully.")
 
+
+def generate_daily_status_table(df):
+
+    # Normalize Timestamp
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], format="%H:%M:%S", errors="coerce")
+    df = df.dropna(subset=["Timestamp"])
+
+    # Normalize status to base form
+    df["Base_Status"] = df["Status"].str.replace(r"^(Start |End )", "", regex=True)
+
+    # Compute time spent by subtracting timestamp[i+1] - timestamp[i]
+    df["Next_Timestamp"] = df["Timestamp"].shift(-1)
+    df["Next_Date"] = df["Date"].shift(-1)
+    df["Time_Diff"] = (df["Next_Timestamp"] - df["Timestamp"]).dt.total_seconds()
+
+    # Default fallback for time at end of file
+    df["Time_Diff"] = df["Time_Diff"].fillna(0)
+    df["Time_Diff"] = df["Time_Diff"].clip(lower=0)
+
+    # Handle potential day rollovers
+    new_rows = []
+    for i, row in df.iterrows():
+        status = row["Base_Status"]
+        date = row["Date"]
+        time = row["Timestamp"]
+        next_time = row["Next_Timestamp"]
+        duration = row["Time_Diff"]
+
+        if pd.isna(next_time) or duration == 0:
+            new_rows.append([date, status, duration])
+            continue
+
+        # Check if date changes
+        if row["Date"] != row["Next_Date"] or next_time < time:
+            midnight = datetime.combine(time.date(), datetime.min.time()) + timedelta(days=1)
+            seconds_to_midnight = (midnight - time).total_seconds()
+            seconds_after_midnight = max(0, duration - seconds_to_midnight)
+
+            new_rows.append([date, status, seconds_to_midnight])
+            new_rows.append([row["Next_Date"], status, seconds_after_midnight])
+        else:
+            new_rows.append([date, status, duration])
+
+    # Build final dataframe
+    status_df = pd.DataFrame(new_rows, columns=["Date", "Status", "Seconds"])
+    pivot = status_df.pivot_table(index="Date", columns="Status", values="Seconds", aggfunc="sum").fillna(0)
+
+    # Convert seconds to hours
+    pivot = pivot / 3600
+    pivot = pivot.round(2)
+
+    # Ensure all expected statuses are present
+    for col in ["Productive", "Idle", "Standby", "Downtime", "Off"]:
+        if col not in pivot.columns:
+            pivot[col] = 0.0
+
+    # Reorder columns
+    pivot = pivot[["Productive", "Idle", "Standby", "Downtime", "Off"]]
+
+    # Reset index for final output
+    pivot = pivot.reset_index()
+
+    return pivot
+
+# Generate the daily status table from df
+daily_status_df = generate_daily_status_table(df)
+
+# Convert and sort by date
+daily_status_df["Date"] = pd.to_datetime(daily_status_df["Date"])
+daily_status_df = daily_status_df.sort_values("Date")
+
+# Export to CSV
+daily_status_df.to_csv(r"C:\Users\shery\Downloads\SUTD\DBA\Daily_Status_Table.csv", index=False)
+print("✅ Daily status table saved successfully.")
