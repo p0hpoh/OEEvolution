@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ========== CONFIG ==========
 # folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/Machine copy")
@@ -15,12 +15,15 @@ products = []
 product_ids = []
 time_diffs = []
 dates = []
+assigned_bases = []
+assigned_time_diffs = []
 
 # ========== Global Variables ==========
 last_product = ""
 last_product_id = "99999999"
 # We'll carry the last status from file to file; default is "Standby"
 global_base_status = "Standby"
+machine_powered_on = True
 
 # ========== Utility Functions ==========
 def base_status_of(label: str) -> str:
@@ -43,7 +46,7 @@ def compute_time_diff(prev_ts, current_ts, prev_label, current_label):
         return None
     prev_base = base_status_of(prev_label)
     this_base = base_status_of(current_label)
-    if prev_base == this_base and prev_base != "Downtime":
+    if prev_base == this_base and prev_base not in ["Downtime", "Off"]:
         return (current_ts - prev_ts).total_seconds()
     return None
 
@@ -65,6 +68,7 @@ FALLBACK_STATUS = "Standby"  # If a status ends and no new status is triggered, 
 # ========== Process Each File in Sorted Order ==========
 for log_file in sorted(folder_path.glob("*.log")):
     file_name = log_file.stem
+    file_date = current_date = datetime.today().date()
 
     with open(log_file, "r", encoding="latin-1", errors="ignore") as f:
         lines = f.readlines()
@@ -106,11 +110,25 @@ for log_file in sorted(folder_path.glob("*.log")):
         line_lower = message.lower()
         backup_status = current_base_status  # old status
         new_label = backup_status  # default to old status
+        clean_message = message.strip()
 
-        # ===== TRIGGERS =====
+        # ===== Shutdown/Startup detection =====
+        if clean_message == "**************Close Software**************":
+            if backup_status not in ["Downtime", "Off"]:
+                end_previous_status()
+            new_label = "Off"
+            current_base_status = "Off"
+            machine_powered_on = False
+
+        elif clean_message == "|*************Start PCB*************|":
+            new_label = FALLBACK_STATUS
+            current_base_status = FALLBACK_STATUS
+            machine_powered_on = True
+
+        # ===== STATUS TRIGGERS =====
 
         # 1) "start mark" => end old status, then "Start Productive"
-        if  "(0)--start mark!--" in line_lower:
+        elif  "(0)--start mark!--" in line_lower:
             # End old status if it's not downtime
             if backup_status != "Downtime":
                 end_previous_status()
@@ -158,15 +176,36 @@ for log_file in sorted(folder_path.glob("*.log")):
                 new_label = backup_status
 
         # ===== Time Difference =====
-        time_diff = None
-        if statuses:
-            prev_base = base_status_of(statuses[-1])
-            this_base = base_status_of(new_label)
-            # Only compute if same base, not fallback or downtime
-            if prev_base == this_base and this_base not in ["Downtime"]:
-                prev_ts_str = timestamps[-1]
-                prev_dt = datetime.strptime(prev_ts_str, "%H:%M:%S")
-                time_diff = (current_dt - prev_dt).total_seconds()
+        if machine_powered_on and previous_timestamp and previous_label != "Off":
+            prev_full = datetime.combine(file_date, previous_timestamp.time())
+            curr_full = datetime.combine(current_date, current_dt.time())
+            time_diff = (curr_full - prev_full).total_seconds()
+
+            midnight = datetime.combine(prev_full.date() + timedelta(days=1), datetime.min.time())
+
+            if prev_full < midnight < curr_full:
+                seconds_before_midnight = (midnight - prev_full).total_seconds()
+                seconds_after_midnight = (curr_full - midnight).total_seconds()
+
+                assigned_bases.append(base_status_of(previous_label))
+                assigned_time_diffs.append(seconds_before_midnight)
+                dates.append(prev_full.strftime("%d/%m/%Y"))
+
+                assigned_bases.append(base_status_of(previous_label))
+                assigned_time_diffs.append(seconds_after_midnight)
+                dates.append(curr_full.strftime("%d/%m/%Y"))
+
+                time_diffs.append(seconds_before_midnight + seconds_after_midnight)
+            else:
+                assigned_bases.append(base_status_of(previous_label))
+                assigned_time_diffs.append(time_diff)
+                dates.append(prev_full.strftime("%d/%m/%Y"))
+                time_diffs.append(time_diff)
+        else:
+            assigned_bases.append(None)
+            assigned_time_diffs.append(None)
+            dates.append(file_date.strftime("%d/%m/%Y"))
+            time_diffs.append(None)
 
         # ===== Append row =====
         timestamps.append(timestamp_str)
@@ -174,8 +213,6 @@ for log_file in sorted(folder_path.glob("*.log")):
         statuses.append(new_label)
         products.append(current_product)
         product_ids.append(current_product_id)
-        dates.append(file_name)
-        time_diffs.append(time_diff)
 
         previous_timestamp = current_dt
         previous_label = new_label
@@ -194,14 +231,15 @@ df = pd.DataFrame({
     "Status": statuses
 })
 
+df["Assigned_Base"] = assigned_bases
+df["Assigned_Time_Seconds"] = assigned_time_diffs
+df["Assigned_Time_Hours"] = df["Assigned_Time_Seconds"] / 3600
+
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
 print(df.head(2000))
-
-
-
 
 # ✅ Export a middle slice (1M rows max) to Excel, change accordingly
 excel_limit = 1_048_575
@@ -211,35 +249,25 @@ output_path = r"C:\Users\shery\Downloads\SUTD\DBA\log_data_slice.xlsx"
 df_slice.to_excel(output_path, index=False)
 print(f"✅ Excel file with {len(df_slice)} rows saved to: {output_path}")
 
-
-
-
-# ========== Generate Status Summary Table ==========
+# ========== Generate Status Summary ==========
 def generate_status_summary(df: pd.DataFrame, output_path: str):
-    """
-    Generates a daily status summary table using actual 'Status' values.
-    Calculates time difference between each row and the next row,
-    assigns that duration to the current row's status,
-    and sums it per day per status.
-    """
-    df = df.copy()
-    df['Base_Status'] = df['Status'].apply(lambda x: base_status_of(str(x).strip()))
-    df['Time_Diff_Hours'] = df['Time Difference (Seconds)'] / 3600
-
-    status_summary = (
-        df.groupby(['Date', 'Base_Status'])['Time_Diff_Hours']
+    df_summary = df.copy()
+    df_summary = df_summary[
+        (df_summary["Assigned_Base"].notnull()) &
+        (df_summary["Assigned_Time_Seconds"].notnull())
+    ]
+    summary = (
+        df_summary.groupby(["Date", "Assigned_Base"])["Assigned_Time_Hours"]
         .sum()
         .unstack(fill_value=0)
     )
-
-    desired_order = ['Idle', 'Standby', 'Downtime', 'Productive']
-    status_summary = status_summary.reindex(columns=desired_order, fill_value=0)
-    status_summary.columns = [f"{col} (h)" for col in status_summary.columns]
-    status_summary = status_summary.reset_index().round(2)
-
-    status_summary.to_csv(output_path, index=False)
+    desired_order = ["Idle", "Standby", "Downtime", "Productive", "Off"]
+    summary = summary.reindex(columns=desired_order, fill_value=0)
+    summary.columns = [f"{col} (h)" for col in summary.columns]
+    summary = summary.reset_index().round(2)
+    summary.to_csv(output_path, index=False)
     print(f"✅ Daily status summary saved to: {output_path}")
 
 # ========== Save Output ==========
-output_file = r"C:\Users\shery\Downloads\SUTD\DBA\status_summary.csv"
+output_file = r"C:\Users\shery\Downloads\SUTD\DBA\status7.csv"
 generate_status_summary(df, output_file)
