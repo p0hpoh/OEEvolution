@@ -1,16 +1,16 @@
 import pandas as pd
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ========== CONFIG ==========
-# folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/Machine copy")
+# folder_path = Path("/Users/sabaiyi/Desktop/SUTD/term4/DBA/project/2024 Logs/PcbVision/PCB/Log/test")
 folder_path = Path(r"C:\Users\Jerald\Documents\Uni Docs\Term 4\Data Business and Analytics\Project\Datasets\2024 Logs\PcbVision\PCB\Log\Machine")
 
 # ========== DataFrame Lists ==========
 timestamps = []
 log_messages = []
-statuses = []
+statuses = []        # Use this list for status labels
 products = []
 product_ids = []
 time_diffs = []
@@ -19,14 +19,15 @@ dates = []
 # ========== Global Variables ==========
 last_product = ""
 last_product_id = "99999999"
-# We'll carry the last status from file to file; default is "Standby"
+# We'll carry the last status from file to file; default is "Idle"
 global_base_status = "Standby"
+FALLBACK_STATUS = "Standby"  # fallback if a status ends and no new trigger appears
 
 # ========== Utility Functions ==========
 def base_status_of(label: str) -> str:
     """
     Convert "Start X" -> "X", "End X" -> "X".
-    "Downtime" remains "Downtime", "Standby" remains "Standby".
+    "Downtime", "Standby", "Off" remain as is.
     """
     if label.startswith("Start "):
         return label.replace("Start ", "")
@@ -37,7 +38,7 @@ def base_status_of(label: str) -> str:
 def compute_time_diff(prev_ts, current_ts, prev_label, current_label):
     """
     Compute time difference only if the base statuses match (ignoring "Start " / "End ")
-    and are not "Downtime". 
+    and are not "Downtime".
     """
     if prev_ts is None:
         return None
@@ -47,22 +48,24 @@ def compute_time_diff(prev_ts, current_ts, prev_label, current_label):
         return (current_ts - prev_ts).total_seconds()
     return None
 
-def end_previous_status():
+def end_previous_status(entries, including_downtime=False):
     """
     Retroactively mark the last appended line as "End X" if the old base was X
-    in [Productive, Idle, Standby], ignoring "Downtime". 
-    Does NOT forcibly revert to any fallback; that is handled by the main logic.
+    in [Productive, Idle, Standby, Off]. 
+    If including_downtime is True, also end Downtime.
+    (This function is used only when starting a new multi-line status.)
     """
-    if statuses:  # If there's at least one row appended
-        last_label = statuses[-1]
+    if entries:
+        last_label = entries[-1]["Status"]
         last_base = base_status_of(last_label)
-        # If the last base status is a real status (not downtime), end it
-        if last_base in ["Productive", "Idle", "Standby"]:
-            statuses[-1] = f"End {last_base}"
-
-FALLBACK_STATUS = "Standby"  # If a status ends and no new status is triggered, fallback to "Standby"
+        valid_statuses = ["Productive", "Idle", "Standby", "Off"] if including_downtime else ["Productive", "Idle", "Standby"]
+        if last_base in valid_statuses:
+            entries[-1]["Status"] = f"End {last_base}"
 
 # ========== Process Each File in Sorted Order ==========
+# We'll collect log entries as a list of dictionaries.
+log_entries = []
+
 for log_file in sorted(folder_path.glob("*.log")):
     file_name = log_file.stem
 
@@ -71,12 +74,12 @@ for log_file in sorted(folder_path.glob("*.log")):
     if not lines:
         continue
 
-    # We start this file with whatever global_base_status was set from the last file
+    # Start this file with the global base status from previous file.
     current_base_status = global_base_status
     previous_timestamp = None
     previous_label = current_base_status
 
-    # Also keep the product info from previous usage
+    # Retain product info from previous files.
     current_product = last_product
     current_product_id = last_product_id
 
@@ -92,7 +95,7 @@ for log_file in sorted(folder_path.glob("*.log")):
         timestamp_str, message = match.groups()
         current_dt = datetime.strptime(timestamp_str, "%H:%M:%S")
 
-        # Possibly update product info
+        # Update product info if present.
         if "SetFileName File:" in message:
             current_product = message.split("SetFileName File:")[-1].strip()
             last_product = current_product
@@ -104,96 +107,88 @@ for log_file in sorted(folder_path.glob("*.log")):
                 current_product_id = "99999999"
 
         line_lower = message.lower()
-        backup_status = current_base_status  # old status
-        new_label = backup_status  # default to old status
+        backup_status = current_base_status  # store the current status before applying any trigger
+        new_label = backup_status  # default is to remain in the current status
 
         # ===== TRIGGERS =====
 
-        # 1) "start mark" => end old status, then "Start Productive"
-        if  "(0)--start mark!--" in line_lower:
-            # End old status if it's not downtime
+        # (A) "****************Close Software***************"
+        if "****************close software***************" in line_lower:
+            # For a one-line Off status, we do not call end_previous_status()
+            new_label = "Off"
+            current_base_status = "Off"
+
+        # (B) "|*************Start PCB*************|"
+        elif "|*************start pcb*************|" in line_lower:
+            # Only update to Standby if the previous line's base status is Off.
+            if log_entries and base_status_of(log_entries[-1]["Status"]) == "Off":
+                new_label = "Standby"
+                current_base_status = "Standby"
+            else:
+                new_label = backup_status
+
+        # (C) (0)--start mark!-- => end previous status then start Productive
+        elif "(0)--start mark!--" in line_lower:
             if backup_status != "Downtime":
-                end_previous_status()
+                end_previous_status(log_entries)
             new_label = "Start Productive"
             current_base_status = "Productive"
 
-        # 2) "successfully cutting" => line itself is "End Productive"
+        # (D) "successfully cutting" => current line is "End Productive"
         elif "successfully cutting" in line_lower and backup_status == "Productive":
-            # Do NOT call end_previous_status() -> 
-            # we want THIS line to be "End Productive"
             new_label = "End Productive"
-            # after ending, fallback to the old status or to "Standby"?
             current_base_status = FALLBACK_STATUS
 
-        # 3) "(0)stop plc!" => end old status, then "Start Idle"
-        elif ( "(0)stop plc!" in line_lower or "the software stop button is pressed" in line_lower):
+        # (E) (0)stop plc! or "The Software Stop Button is Pressed" => end previous status then start Idle
+        elif "(0)stop plc!" in line_lower or "the software stop button is pressed" in line_lower:
             if backup_status != "Downtime":
-                end_previous_status()
+                end_previous_status(log_entries)
             new_label = "Start Idle"
             current_base_status = "Idle"
 
-        # 4) "alarm reset" => line itself is "End Idle"
+        # (F) "alarm reset" => current line is "End Idle"
         elif "alarm" in line_lower and "reset" in line_lower and backup_status == "Idle":
-            # do NOT call end_previous_status() => 
-            # we want this line to be "End Idle"
             new_label = "End Idle"
-            # after ending, fallback
             current_base_status = FALLBACK_STATUS
 
+        # (G) "----start procession: manufacture----" => end previous status then start Standby
+        elif "start procession" in line_lower and "manufacture" in line_lower:
+            if backup_status != "Downtime":
+                end_previous_status(log_entries)
+            new_label = "Start Standby"
+            current_base_status = "Standby"
+
+        # (H) "err:" => single-line downtime; do not end previous status
+        elif "err:" in line_lower:
+            new_label = "Downtime"
+            current_base_status = backup_status
         else:
-            # Possibly "start procession: manufacture" => end old status, start Standby
-            temp = line_lower.strip("- ").strip()
-            if "start procession" in temp and "manufacture" in temp:
-                if backup_status != "Downtime":
-                    end_previous_status()
-                new_label = "Start Standby"
-                current_base_status = "Standby"
-            # "err:" => single-line downtime
-            elif "err:" in line_lower:
-                new_label = "Downtime"
-                # revert to old status after line
-                current_base_status = backup_status
-            else:
-                # no triggers => remain in old status
-                new_label = backup_status
+            new_label = backup_status
 
-        # ===== Time Difference =====
-        time_diff = None
-        if statuses:
-            prev_base = base_status_of(statuses[-1])
-            this_base = base_status_of(new_label)
-            # Only compute if same base, not fallback or downtime
-            if prev_base == this_base and this_base not in [FALLBACK_STATUS, "Downtime"]:
-                prev_ts_str = timestamps[-1]
-                prev_dt = datetime.strptime(prev_ts_str, "%H:%M:%S")
-                time_diff = (current_dt - prev_dt).total_seconds()
-
-        # ===== Append row =====
-        timestamps.append(timestamp_str)
-        log_messages.append(message)
-        statuses.append(new_label)
-        products.append(current_product)
-        product_ids.append(current_product_id)
-        dates.append(file_name)
-        time_diffs.append(time_diff)
+        # Append the log entry along with parsed timestamp for forward time diff calculation.
+        log_entries.append({
+            "Date": file_name,
+            "Timestamp": timestamp_str,
+            "Log Message": message.strip(),
+            "Product": current_product,
+            "Product_ID": current_product_id,
+            "Status": new_label,
+            "Parsed_TS": current_dt
+        })
 
         previous_timestamp = current_dt
         previous_label = new_label
 
-    # After finishing a file, update global_base_status so next file 
-    # starts with the same status
+    # Update global_base_status to carry over the status to the next file.
     global_base_status = current_base_status
 
 # ========== Build DataFrame ==========
-df = pd.DataFrame({
-    "Date": dates,
-    "Timestamp": timestamps,
-    "Log Message": log_messages,
-    "Product": products,
-    "Product_ID": product_ids,
-    "Status": statuses,
-    "Time Difference (Seconds)": time_diffs
-})
+df = pd.DataFrame(log_entries)
+
+# ========== Compute Forward Time Differences ==========
+df["Next_TS"] = df["Parsed_TS"].shift(-1)
+df["Time Difference (Seconds)"] = (df["Next_TS"] - df["Parsed_TS"]).dt.total_seconds().clip(lower=0).fillna(0)
+df.drop(columns=["Parsed_TS", "Next_TS"], inplace=True)
 
 
 
