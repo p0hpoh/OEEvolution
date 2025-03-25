@@ -224,12 +224,11 @@ pd.set_option('display.expand_frame_repr', False)
 print(df.head(2000))
 
 
-# ========== Function to Produce Product Name ID Table ==========
 def extract_unique_products_from_df(df):
     """
-    Given a DataFrame with a 'Log Message' column, extract unique product entries
-    where Product ID must be exactly 8 digits and appear between '\' and '_'.
-    Returns a new DataFrame with 'Original Line', 'Product Name', and 'Product_ID'.
+    Extracts unique product entries from 'Log Message' column.
+    A Product ID is defined as any continuous 8-digit number within a line containing 'SetFileName'.
+    Returns a DataFrame with 'Original Line', 'Product Name', and 'Product_ID'.
     """
     product_names = []
     product_ids = []
@@ -244,10 +243,10 @@ def extract_unique_products_from_df(df):
         current_product = line.split("SetFileName File:")[-1].strip()
         current_product_name = current_product.split("\\")[-1]
 
-        # ✅ Strictly match only 8 digits BETWEEN \ and _
-        product_id_match = re.search(r"\\(\d{8})_", current_product)
+        # ✅ Match any sequence of 8 digits anywhere in the line
+        product_id_match = re.search(r"\d{8}", line)
         if product_id_match:
-            current_product_id = product_id_match.group(1)
+            current_product_id = product_id_match.group(0)
         else:
             current_product_id = "99999999"
 
