@@ -35,19 +35,6 @@ def base_status_of(label: str) -> str:
         return label.replace("End ", "")
     return label
 
-def compute_time_diff(prev_ts, current_ts, prev_label, current_label):
-    """
-    Compute time difference only if the base statuses match (ignoring "Start " / "End ")
-    and are not "Downtime".
-    """
-    if prev_ts is None:
-        return None
-    prev_base = base_status_of(prev_label)
-    this_base = base_status_of(current_label)
-    if prev_base == this_base and prev_base != "Downtime":
-        return (current_ts - prev_ts).total_seconds()
-    return None
-
 def end_previous_status(entries, including_downtime=False):
     """
     Retroactively mark the last appended line as "End X" if the old base was X
@@ -216,14 +203,8 @@ print(df.head(2000))
 
 
 
-# ========== Changes number of rows Pandas shows ==========
-pd.set_option('display.max_rows', None)
-pd.set_option('display.max_columns', None)
-pd.set_option('display.expand_frame_repr', False)
 
-print(df.head(2000))
-
-
+# ========== Function to Produce Product_ID_Name Table ==========
 def extract_unique_products_from_df(df):
     """
     Extracts unique product entries from 'Log Message' column.
@@ -269,7 +250,7 @@ def extract_unique_products_from_df(df):
 
 
 
-# ========== Function to Produce Number of Products Table ==========
+# ========== Function to Produce Product_Output Table ==========
 def extract_number_of_products_table(df: pd.DataFrame) -> pd.DataFrame:
     """
     Extracts a table that summarizes product marking cycles from a detailed log DataFrame.
@@ -344,7 +325,7 @@ def extract_number_of_products_table(df: pd.DataFrame) -> pd.DataFrame:
 
     return result_df
 
-# ========== Function to Produce Daily Status Table ==========
+# ========== Function to Produce Status Table ==========
 
 def generate_daily_status_table(df):
 
